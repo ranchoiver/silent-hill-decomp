@@ -699,12 +699,14 @@ void Pc_RearLookUpdate(void)
     held = ((keys && s_kb[sch] != SDL_SCANCODE_UNKNOWN && keys[s_kb[sch]]) ||
             (s_pad[sch] >= 0 && PsyX_RawControllerButtonHeld(s_pad[sch])));
 
-    /* TPS/OTS only (not FPS, not classic), gameplay only; cleared otherwise so it
-     * can never latch on. */
+    /* Aim owns the forward camera, including its first input frame before the
+     * combat state updates. Resume rear look on release if its bind is held. */
     g_PcRearLookActive = (held && g_DebugThirdPersonCam && !g_PcFpsCam &&
                           g_GameWork.gameState == GameState_InGame &&
                           g_SysWork.sysState   == SysState_Gameplay &&
-                          !g_PcConsoleInputActive && !g_PcQuickOptionsActive) ? 1 : 0;
+                          !g_PcConsoleInputActive && !g_PcQuickOptionsActive &&
+                          !(g_Controller0->heldBtnFlags & g_GameWorkPtr->config.controllerConfig.aim) &&
+                          !g_SysWork.playerCombat.isAiming) ? 1 : 0;
 }
 
 /* OTS/TPS free-aim aim assist.
