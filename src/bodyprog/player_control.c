@@ -1677,6 +1677,13 @@ void Player_LogicUpdate(s_SubCharacter* player, s_PlayerExtra* extra, GsCOORDINA
                  * feel half as responsive as 60fps. */
                 q3_12 turnSpeed = TIMESTEP_SCALE_30_FPS(g_DeltaTime, Q12_ANGLE(4.0f));
 
+                /* Katana attacks need the authored lower-body animation and lunge.
+                 * Keep reading camera-relative input, but let the attack own motion
+                 * until the upper-body state machine finishes or interrupts it. */
+                bool katanaAttack = extra->lowerBodyState == PlayerLowerBodyState_Attack &&
+                                    g_SysWork.playerCombat.weaponAttack < WEAPON_ATTACK(EquippedWeaponId_Handgun, AttackInputType_Tap) &&
+                                    WEAPON_ATTACK_ID_GET(g_SysWork.playerCombat.weaponAttack) == EquippedWeaponId_Katana;
+
                 /* 2D screen-relative control: input maps to camera-relative
                  * directions and Harry turns to face the move direction. Active
                  * for any non-FPS camera style when enabled, EXCEPT while aiming
@@ -2132,7 +2139,10 @@ void Player_LogicUpdate(s_SubCharacter* player, s_PlayerExtra* extra, GsCOORDINA
                                           : (g_Controller0->heldBtnFlags & hopRunBtn) != 0);
                     }
 
-                    if (backEdge && hopRunHeld && !s_jumpBackActive) {
+                    if (katanaAttack) {
+                        s_jumpBackActive = 0;
+                        s_prevJumpBackTime = -1;
+                    } else if (backEdge && hopRunHeld && !s_jumpBackActive) {
                         s_jumpBackActive = 1;
                         s_jumpBackElapsed = 0;
                         s_prevJumpBackTime = -1;
@@ -2268,10 +2278,12 @@ void Player_LogicUpdate(s_SubCharacter* player, s_PlayerExtra* extra, GsCOORDINA
                     static u8  s_qtActive = 0;
                     static s32 s_qtStart  = 0;
                     static s32 s_qtAccum  = 0;
+                    if (katanaAttack)
+                        s_qtActive = 0;
                     if (g_PcQuickTurnRequest)
                     {
                         g_PcQuickTurnRequest = 0;
-                        if (!s_qtActive && !jumpBackActive)
+                        if (!s_qtActive && !jumpBackActive && !katanaAttack)
                         {
                             s_qtActive = 1;
                             s_qtStart  = player->rotation.vy;
@@ -2299,6 +2311,7 @@ void Player_LogicUpdate(s_SubCharacter* player, s_PlayerExtra* extra, GsCOORDINA
                  * Player_AnimUpdate plays player->model with the lower-body bone
                  * mask and extra->model with the upper-body bone mask.
                  * Backward uses HarryAnim_WalkBackward; no run-backward in original. */
+                if (!katanaAttack)
                 {
                 bool aimingNow = g_Player_IsAiming &&
                                  (g_SysWork.playerCombat.weaponAttack != (s8)NO_VALUE);
@@ -2677,7 +2690,7 @@ void Player_LogicUpdate(s_SubCharacter* player, s_PlayerExtra* extra, GsCOORDINA
                  * whose keyframe pattern never matches the hop anim -- so the
                  * landing was silent in TPS/OTS while classic, which does not run
                  * this shim, kept its sound. */
-                if (!jumpBackActive) {
+                if (!jumpBackActive && !katanaAttack) {
                     /* Strafe footsteps (PC): the sidestep / strafe-run anim is driven
                      * by the stepping globals, not IsMovingForward/Backward, so without
                      * these branches every strafe fell through to None and the dispatcher
@@ -2723,10 +2736,24 @@ void Player_LogicUpdate(s_SubCharacter* player, s_PlayerExtra* extra, GsCOORDINA
                      * original path set — classic is not this shim's business. */
                 }
 
-                /* Trigger footstep sounds based on animation keyframes.
-                 * Save/restore D_800C4550 because func_8007B924 overwrites it
-                 * with moveDistance which isn't set on PC. */
+                if (katanaAttack)
                 {
+                    /* A strafe/diagonal input must not redirect the forward lunge.
+                     * Native movement publishes its speed through func_8007B924;
+                     * func_8007C0D8 then applies the normal collision resolution. */
+                    g_Player_HeadingAngle = Q12_ANGLE(0.0f);
+                    player->properties.player.headingAngle = Q12_ANGLE(0.0f);
+                    /* The shim does not maintain the native speed between attacks.
+                     * Discard any remaining impulse before a new attack's windup. */
+                    if (player->model.stateStep == 0)
+                        player->properties.player.moveSpeed = Q12(0.0f);
+                    Player_LowerBodyUpdate(player, extra);
+                }
+                else
+                {
+                    /* Trigger footstep sounds based on animation keyframes.
+                     * Save/restore D_800C4550 because func_8007B924 overwrites it
+                     * with the native speed, which the shim does not maintain. */
                     q19_12 savedSpeed = D_800C4550;
                     func_8007B924(player, extra);
                     D_800C4550 = savedSpeed;
